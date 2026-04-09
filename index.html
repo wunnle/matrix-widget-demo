@@ -135,8 +135,7 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/matrix-widget-api@0.1.0/dist/api.min.js"></script>
-  <script>
+  <script type="module">
     const statusEl = document.getElementById('status');
     const logEl = document.getElementById('log');
     const approveBtn = document.getElementById('approveBtn');
@@ -163,112 +162,116 @@
     let widgetApi = null;
     let widgetReady = false;
 
-    function sendMessage(body) {
+    async function sendMessage(body) {
       if (!widgetApi) {
-        return Promise.reject(new Error('Widget API not initialized'));
-      }
-      if (!widgetReady) {
-        return Promise.reject(new Error('Widget is not ready yet'));
+        throw new Error('Widget API not initialized');
       }
       if (typeof widgetApi.sendRoomEvent !== 'function') {
-        return Promise.reject(new Error('sendRoomEvent is unavailable on this widget API instance'));
+        throw new Error('sendRoomEvent is unavailable on this widget API instance');
       }
 
-      return widgetApi.sendRoomEvent('m.room.message', {
+      return await widgetApi.sendRoomEvent('m.room.message', {
         msgtype: 'm.text',
         body,
       });
     }
 
-    function init() {
+    async function init() {
       try {
         log(`Location search: ${window.location.search || '(empty)'}`);
         log(`Detected widgetId: ${params.widgetId || '(missing)'}`);
         log(`Parent origin hint: ${params.parentUrl}`);
 
-        if (!window.mxwidgets || !window.mxwidgets.WidgetApi) {
-          throw new Error('mxwidgets global not found');
+        const mod = await import('https://cdn.skypack.dev/matrix-widget-api');
+        const WidgetApi = mod.WidgetApi || mod.default?.WidgetApi || mod.default;
+        const MatrixCapabilities = mod.MatrixCapabilities || {};
+        const WidgetEventCapability = mod.WidgetEventCapability;
+        const EventDirection = mod.EventDirection;
+
+        if (!WidgetApi) {
+          throw new Error('Could not load WidgetApi from matrix-widget-api package');
         }
 
-        const targetOrigin = '*';
-        widgetApi = new window.mxwidgets.WidgetApi(params.widgetId, targetOrigin);
+        widgetApi = new WidgetApi(params.widgetId);
         log(`WidgetApi created with widgetId: ${params.widgetId || '(null)'}`);
 
-        if (window.mxwidgets.MatrixCapabilities) {
-          if (window.mxwidgets.MatrixCapabilities.SendEvent) {
-            widgetApi.requestCapability(window.mxwidgets.MatrixCapabilities.SendEvent);
+        if (typeof widgetApi.on === 'function') {
+          widgetApi.on('ready', () => {
+            widgetReady = true;
+            setStatus(`Widget ready. widgetId=${params.widgetId || '(missing)'}`);
+            log('Received ready event from host client');
+          });
+        }
+
+        if (typeof widgetApi.requestCapability === 'function') {
+          if (MatrixCapabilities?.SendEvent) {
+            widgetApi.requestCapability(MatrixCapabilities.SendEvent);
             log('Requested capability: SendEvent');
           }
-          if (window.mxwidgets.MatrixCapabilities.SendMessage) {
-            widgetApi.requestCapability(window.mxwidgets.MatrixCapabilities.SendMessage);
+          if (MatrixCapabilities?.SendMessage) {
+            widgetApi.requestCapability(MatrixCapabilities.SendMessage);
             log('Requested capability: SendMessage');
           }
-        }
-
-        if (window.mxwidgets.WidgetEventCapability && window.mxwidgets.EventDirection) {
-          try {
-            const cap = window.mxwidgets.WidgetEventCapability.forRoomEvent(
-              window.mxwidgets.EventDirection.Send,
-              'm.room.message',
-              undefined,
-            ).raw;
-            widgetApi.requestCapability(cap);
-            log(`Requested explicit room-event capability: ${cap}`);
-          } catch (err) {
-            log(`Explicit room-event capability request failed to build: ${err.message}`);
-          }
-        }
-
-        widgetApi.on('ready', function () {
-          widgetReady = true;
-          setStatus(`Widget ready. widgetId=${params.widgetId || '(missing)'}`);
-          log('Received ready event from host client');
-
-          try {
-            if (typeof widgetApi.hasCapability === 'function' && window.mxwidgets.MatrixCapabilities) {
-              const checks = [];
-              if (window.mxwidgets.MatrixCapabilities.SendEvent) {
-                checks.push(`has SendEvent = ${widgetApi.hasCapability(window.mxwidgets.MatrixCapabilities.SendEvent)}`);
-              }
-              if (window.mxwidgets.MatrixCapabilities.SendMessage) {
-                checks.push(`has SendMessage = ${widgetApi.hasCapability(window.mxwidgets.MatrixCapabilities.SendMessage)}`);
-              }
-              if (checks.length) log(checks.join(' | '));
+          if (WidgetEventCapability && EventDirection) {
+            try {
+              const cap = WidgetEventCapability.forRoomEvent(
+                EventDirection.Send,
+                'm.room.message',
+                undefined,
+              ).raw;
+              widgetApi.requestCapability(cap);
+              log(`Requested explicit room-event capability: ${cap}`);
+            } catch (err) {
+              log(`Explicit room-event capability request failed to build: ${err.message}`);
             }
-          } catch (err) {
-            log(`Capability inspection failed: ${err.message}`);
           }
-        });
+        }
 
-        widgetApi.start();
-        setStatus('Started widget API. Waiting for ready event…');
-        log('widgetApi.start() called');
+        if (typeof widgetApi.start === 'function') {
+          await widgetApi.start();
+          log('widgetApi.start() completed');
+        }
+
+        try {
+          if (typeof widgetApi.hasCapability === 'function') {
+            const checks = [];
+            if (MatrixCapabilities?.SendEvent) {
+              checks.push(`has SendEvent = ${widgetApi.hasCapability(MatrixCapabilities.SendEvent)}`);
+            }
+            if (MatrixCapabilities?.SendMessage) {
+              checks.push(`has SendMessage = ${widgetApi.hasCapability(MatrixCapabilities.SendMessage)}`);
+            }
+            if (checks.length) log(checks.join(' | '));
+          }
+        } catch (err) {
+          log(`Capability inspection failed: ${err.message}`);
+        }
+
+        setStatus(`Widget API connected. widgetId=${params.widgetId || '(missing)'}${widgetReady ? ' (ready)' : ' (waiting for ready)'}`);
       } catch (err) {
         setStatus('Widget API failed to initialize. Open this inside a Matrix widget-capable client, not just a plain browser tab.');
         log(`Init error: ${err.message}`);
       }
     }
 
-    approveBtn.addEventListener('click', function () {
-      log('Approve clicked. Trying to send: approve');
-      sendMessage('approve')
-        .then(function () {
-          log('Sent message: approve');
-        })
-        .catch(function (err) {
-          log(`Approve failed: ${err.message}`);
-        });
+    approveBtn.addEventListener('click', async () => {
+      try {
+        log('Approve clicked. Trying to send: approve');
+        await sendMessage('approve');
+        log('Sent message: approve');
+      } catch (err) {
+        log(`Approve failed: ${err.message}`);
+      }
     });
 
-    detailsBtn.addEventListener('click', function () {
-      log('Details clicked. Trying to send: details');
-      sendMessage('details')
-        .then(function () {
-          log('Sent message: details');
-        })
-        .catch(function (err) {
-          log(`Details failed: ${err.message}`);
-        });
+    detailsBtn.addEventListener('click', async () => {
+      try {
+        log('Details clicked. Trying to send: details');
+        await sendMessage('details');
+        log('Sent message: details');
+      } catch (err) {
+        log(`Details failed: ${err.message}`);
+      }
     });
 
     init();
