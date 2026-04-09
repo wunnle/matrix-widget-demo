@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Matrix Widget Demo</title>
+  <style>
+    :root {
+      --bg: #10131a;
+      --panel: #171c26;
+      --text: #e8ecf3;
+      --muted: #9aa4b2;
+      --border: #2b3445;
+      --green: #0dbd8b;
+      --blue: #4f8cff;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, #0d1016, #111722);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .card {
+      width: min(100%, 430px);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .head strong { display: block; font-size: 15px; }
+    .head span { color: var(--muted); font-size: 12px; }
+    .badge {
+      background: rgba(79,140,255,.16);
+      color: #bcd2ff;
+      border: 1px solid rgba(79,140,255,.25);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .body { padding: 16px; display: grid; gap: 14px; }
+    .bubble, .box {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(255,255,255,.03);
+    }
+    .sender {
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      appearance: none;
+      border: 1px solid #38517a;
+      background: rgba(79,140,255,.14);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary {
+      background: rgba(13,189,139,.14);
+      border-color: rgba(13,189,139,.3);
+    }
+    .status, .log {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    code {
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px;
+      padding: 2px 6px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <div>
+        <strong>Matrix widget prototype</strong>
+        <span>Two buttons. Two messages. No decorative nonsense.</span>
+      </div>
+      <div class="badge">real-ish</div>
+    </div>
+
+    <div class="body">
+      <div class="bubble">
+        <div class="sender">Bender</div>
+        <div>
+          Fallback for normal clients: reply with <code>approve</code> or <code>details</code>.
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="chips">
+          <button class="primary" id="approveBtn">Approve</button>
+          <button id="detailsBtn">Details</button>
+        </div>
+      </div>
+
+      <div class="box">
+        <strong>Status</strong>
+        <div class="status" id="status">Starting widget…</div>
+      </div>
+
+      <div class="box">
+        <strong>Log</strong>
+        <div class="log" id="log">Waiting for trouble.</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const approveBtn = document.getElementById('approveBtn');
+    const detailsBtn = document.getElementById('detailsBtn');
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function log(text) {
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      logEl.textContent = `[${now}] ${text}\n\n` + logEl.textContent;
+    }
+
+    let widgetApi = null;
+
+    async function sendMessage(body) {
+      if (!widgetApi) {
+        throw new Error('Widget API not initialized');
+      }
+
+      if (typeof widgetApi.sendRoomEvent === 'function') {
+        return await widgetApi.sendRoomEvent('m.room.message', {
+          msgtype: 'm.text',
+          body,
+        });
+      }
+
+      if (typeof widgetApi.transport?.send === 'function') {
+        throw new Error('Widget API loaded, but direct sendRoomEvent helper not found');
+      }
+
+      throw new Error('No supported send method found on widget API');
+    }
+
+    async function init() {
+      try {
+        const mod = await import('https://cdn.skypack.dev/matrix-widget-api');
+        const WidgetApi = mod.WidgetApi || mod.default?.WidgetApi || mod.default;
+        const MatrixCapabilities = mod.MatrixCapabilities || {};
+
+        if (!WidgetApi) {
+          throw new Error('Could not load WidgetApi from matrix-widget-api package');
+        }
+
+        widgetApi = new WidgetApi();
+
+        if (typeof widgetApi.requestCapability === 'function') {
+          if (MatrixCapabilities?.SendEvent) {
+            widgetApi.requestCapability(MatrixCapabilities.SendEvent);
+          }
+          if (MatrixCapabilities?.SendMessage) {
+            widgetApi.requestCapability(MatrixCapabilities.SendMessage);
+          }
+        }
+
+        if (typeof widgetApi.start === 'function') {
+          await widgetApi.start();
+        }
+
+        setStatus('Widget API connected. If the host client grants permission, the buttons should send room messages.');
+        log('Widget initialized. Ready to attempt sending messages.');
+      } catch (err) {
+        setStatus('Widget API failed to initialize. Open this inside a Matrix widget-capable client, not just a plain browser tab.');
+        log(`Init error: ${err.message}`);
+      }
+    }
+
+    approveBtn.addEventListener('click', async () => {
+      try {
+        log('Approve clicked. Trying to send: approve');
+        await sendMessage('approve');
+        log('Sent message: approve');
+      } catch (err) {
+        log(`Approve failed: ${err.message}`);
+      }
+    });
+
+    detailsBtn.addEventListener('click', async () => {
+      try {
+        log('Details clicked. Trying to send: details');
+        await sendMessage('details');
+        log('Sent message: details');
+      } catch (err) {
+        log(`Details failed: ${err.message}`);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
