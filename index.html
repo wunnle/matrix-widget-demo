@@ -167,6 +167,7 @@
     let widgetApi = null;
     let widgetReady = false;
     let widgetCapabilitiesApproved = false;
+    let requestedCaps = [];
 
     async function sendMessage(body) {
       if (!widgetApi) {
@@ -205,26 +206,48 @@
           throw new Error('Could not load WidgetApi from matrix-widget-api package');
         }
 
-        widgetApi = new WidgetApi(params.widgetId);
+        widgetApi = new WidgetApi(
+          params.widgetId,
+          params.parentUrl === '*' ? null : new URL(params.parentUrl).origin,
+        );
         log(`WidgetApi created with widgetId: ${params.widgetId || '(null)'}`);
 
         if (typeof widgetApi.on === 'function') {
           widgetApi.on('ready', () => {
             widgetReady = true;
-            setStatus(`Widget ready. widgetId=${params.widgetId || '(missing)'}${widgetCapabilitiesApproved ? '' : ' (waiting for capability approval)'}`);
+            widgetCapabilitiesApproved = requestedCaps.every((cap) => widgetApi.hasCapability(cap));
+            setStatus(
+              `Widget ready. widgetId=${params.widgetId || '(missing)'}`
+              + `${widgetCapabilitiesApproved ? '' : ' (send capability not approved)'}`
+            );
             log('Received ready event from host client');
-            if (widgetCapabilitiesApproved) {
-              setButtonsEnabled(true);
-            }
+            log(
+              requestedCaps.length
+                ? requestedCaps.map((cap) => `has ${cap} = ${widgetApi.hasCapability(cap)}`).join(' | ')
+                : 'No widget capabilities were requested'
+            );
+            setButtonsEnabled(widgetCapabilitiesApproved);
           });
         }
 
-        const requestedCaps = [];
-        if (MatrixCapabilities?.SendEvent) {
+        requestedCaps = [];
+        if (typeof widgetApi.requestCapabilityToSendEvent === 'function') {
+          widgetApi.requestCapabilityToSendEvent('m.room.message');
+          requestedCaps.push('org.matrix.msc2762.send.event:m.room.message');
+          log('Queued capability request: org.matrix.msc2762.send.event:m.room.message');
+        } else if (MatrixCapabilities?.SendEvent) {
+          widgetApi.requestCapability(MatrixCapabilities.SendEvent);
           requestedCaps.push(MatrixCapabilities.SendEvent);
+          log(`Queued capability request: ${MatrixCapabilities.SendEvent}`);
         }
-        if (MatrixCapabilities?.SendMessage) {
+        if (typeof widgetApi.requestCapabilityToSendMessage === 'function') {
+          widgetApi.requestCapabilityToSendMessage('m.text');
+          requestedCaps.push('org.matrix.msc2762.send.message:m.text');
+          log('Queued capability request: org.matrix.msc2762.send.message:m.text');
+        } else if (MatrixCapabilities?.SendMessage) {
+          widgetApi.requestCapability(MatrixCapabilities.SendMessage);
           requestedCaps.push(MatrixCapabilities.SendMessage);
+          log(`Queued capability request: ${MatrixCapabilities.SendMessage}`);
         }
         if (WidgetEventCapability && EventDirection) {
           try {
@@ -233,40 +256,21 @@
               'm.room.message',
               undefined,
             ).raw;
-            requestedCaps.push(cap);
-            log(`Prepared explicit room-event capability: ${cap}`);
+            if (!requestedCaps.includes(cap)) {
+              widgetApi.requestCapability(cap);
+              requestedCaps.push(cap);
+              log(`Queued explicit room-event capability: ${cap}`);
+            }
           } catch (err) {
             log(`Explicit room-event capability request failed to build: ${err.message}`);
           }
         }
 
+        log(`Capabilities queued before start: ${requestedCaps.join(', ') || '(none)'}`);
+
         if (typeof widgetApi.start === 'function') {
           await widgetApi.start();
           log('widgetApi.start() completed');
-        }
-
-        if (typeof widgetApi.sendContentLoaded === 'function') {
-          try {
-            await widgetApi.sendContentLoaded();
-            log('widgetApi.sendContentLoaded() completed');
-          } catch (err) {
-            log(`widgetApi.sendContentLoaded() failed: ${err.message}`);
-          }
-        }
-
-        if (requestedCaps.length) {
-          log(`Requesting capabilities: ${requestedCaps.join(', ')}`);
-          if (typeof widgetApi.requestCapabilities === 'function') {
-            await widgetApi.requestCapabilities(requestedCaps);
-            widgetCapabilitiesApproved = true;
-            log('Capability request resolved');
-          } else if (typeof widgetApi.requestCapability === 'function') {
-            requestedCaps.forEach((cap) => widgetApi.requestCapability(cap));
-            widgetCapabilitiesApproved = true;
-            log('Requested capabilities one-by-one; approval status cannot be confirmed with this API version');
-          } else {
-            log('This widget API instance does not expose requestCapability/requestCapabilities');
-          }
         }
 
         try {
