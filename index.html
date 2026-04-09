@@ -186,6 +186,8 @@
         const mod = await import('https://cdn.skypack.dev/matrix-widget-api');
         const WidgetApi = mod.WidgetApi || mod.default?.WidgetApi || mod.default;
         const MatrixCapabilities = mod.MatrixCapabilities || {};
+        const WidgetEventCapability = mod.WidgetEventCapability;
+        const EventDirection = mod.EventDirection;
 
         if (!WidgetApi) {
           throw new Error('Could not load WidgetApi from matrix-widget-api package');
@@ -203,11 +205,40 @@
             widgetApi.requestCapability(MatrixCapabilities.SendMessage);
             log('Requested capability: SendMessage');
           }
+
+          if (WidgetEventCapability && EventDirection) {
+            try {
+              const cap = WidgetEventCapability.forRoomEvent(
+                EventDirection.Send,
+                'm.room.message',
+                undefined,
+              ).raw;
+              widgetApi.requestCapability(cap);
+              log(`Requested explicit room-event capability: ${cap}`);
+            } catch (err) {
+              log(`Explicit room-event capability request failed to build: ${err.message}`);
+            }
+          }
         }
 
         if (typeof widgetApi.start === 'function') {
           await widgetApi.start();
           log('widgetApi.start() completed');
+        }
+
+        if (typeof widgetApi.hasCapability === 'function') {
+          try {
+            const checks = [];
+            if (MatrixCapabilities?.SendEvent) {
+              checks.push(`has SendEvent = ${widgetApi.hasCapability(MatrixCapabilities.SendEvent)}`);
+            }
+            if (MatrixCapabilities?.SendMessage) {
+              checks.push(`has SendMessage = ${widgetApi.hasCapability(MatrixCapabilities.SendMessage)}`);
+            }
+            if (checks.length) log(checks.join(' | '));
+          } catch (err) {
+            log(`Capability inspection failed: ${err.message}`);
+          }
         }
 
         setStatus(`Widget API connected. widgetId=${widgetId || '(missing)'}`);
