@@ -150,7 +150,18 @@
       logEl.textContent = `[${now}] ${text}\n\n` + logEl.textContent;
     }
 
+    function getWidgetId() {
+      const params = new URLSearchParams(window.location.search);
+      return (
+        params.get('widgetId') ||
+        params.get('widget_id') ||
+        params.get('id') ||
+        null
+      );
+    }
+
     let widgetApi = null;
+    let widgetId = getWidgetId();
 
     async function sendMessage(body) {
       if (!widgetApi) {
@@ -164,15 +175,14 @@
         });
       }
 
-      if (typeof widgetApi.transport?.send === 'function') {
-        throw new Error('Widget API loaded, but direct sendRoomEvent helper not found');
-      }
-
-      throw new Error('No supported send method found on widget API');
+      throw new Error('sendRoomEvent is unavailable on this widget API instance');
     }
 
     async function init() {
       try {
+        log(`Location search: ${window.location.search || '(empty)'}`);
+        log(`Detected widgetId: ${widgetId || '(missing)'}`);
+
         const mod = await import('https://cdn.skypack.dev/matrix-widget-api');
         const WidgetApi = mod.WidgetApi || mod.default?.WidgetApi || mod.default;
         const MatrixCapabilities = mod.MatrixCapabilities || {};
@@ -181,23 +191,26 @@
           throw new Error('Could not load WidgetApi from matrix-widget-api package');
         }
 
-        widgetApi = new WidgetApi();
+        widgetApi = new WidgetApi(widgetId);
+        log(`WidgetApi created with widgetId: ${widgetId || '(null)'}`);
 
         if (typeof widgetApi.requestCapability === 'function') {
           if (MatrixCapabilities?.SendEvent) {
             widgetApi.requestCapability(MatrixCapabilities.SendEvent);
+            log('Requested capability: SendEvent');
           }
           if (MatrixCapabilities?.SendMessage) {
             widgetApi.requestCapability(MatrixCapabilities.SendMessage);
+            log('Requested capability: SendMessage');
           }
         }
 
         if (typeof widgetApi.start === 'function') {
           await widgetApi.start();
+          log('widgetApi.start() completed');
         }
 
-        setStatus('Widget API connected. If the host client grants permission, the buttons should send room messages.');
-        log('Widget initialized. Ready to attempt sending messages.');
+        setStatus(`Widget API connected. widgetId=${widgetId || '(missing)'}`);
       } catch (err) {
         setStatus('Widget API failed to initialize. Open this inside a Matrix widget-capable client, not just a plain browser tab.');
         log(`Init error: ${err.message}`);
