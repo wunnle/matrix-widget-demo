@@ -168,6 +168,18 @@
     let widgetReady = false;
     let widgetCapabilitiesApproved = false;
     let requestedCaps = [];
+    let approvedCaps = {
+      sendEvent: false,
+      sendMessage: false,
+    };
+
+    function refreshApprovedCaps() {
+      approvedCaps = {
+        sendEvent: Boolean(widgetApi?.hasCapability?.('org.matrix.msc2762.send.event:m.room.message')),
+        sendMessage: Boolean(widgetApi?.hasCapability?.('org.matrix.msc2762.send.message:m.text')),
+      };
+      widgetCapabilitiesApproved = approvedCaps.sendEvent || approvedCaps.sendMessage;
+    }
 
     async function sendMessage(body) {
       if (!widgetApi) {
@@ -179,14 +191,16 @@
       if (!widgetCapabilitiesApproved) {
         throw new Error('Widget send capability has not been approved yet');
       }
-      if (typeof widgetApi.sendRoomEvent !== 'function') {
-        throw new Error('sendRoomEvent is unavailable on this widget API instance');
+      if (approvedCaps.sendMessage && typeof widgetApi.sendRoomMessage === 'function') {
+        return await widgetApi.sendRoomMessage(body, 'm.text');
       }
-
-      return await widgetApi.sendRoomEvent('m.room.message', {
-        msgtype: 'm.text',
-        body,
-      });
+      if (approvedCaps.sendEvent && typeof widgetApi.sendRoomEvent === 'function') {
+        return await widgetApi.sendRoomEvent('m.room.message', {
+          msgtype: 'm.text',
+          body,
+        });
+      }
+      throw new Error('No supported send method is available on this widget API instance');
     }
 
     async function init() {
@@ -215,16 +229,15 @@
         if (typeof widgetApi.on === 'function') {
           widgetApi.on('ready', () => {
             widgetReady = true;
-            widgetCapabilitiesApproved = requestedCaps.every((cap) => widgetApi.hasCapability(cap));
+            refreshApprovedCaps();
             setStatus(
               `Widget ready. widgetId=${params.widgetId || '(missing)'}`
               + `${widgetCapabilitiesApproved ? '' : ' (send capability not approved)'}`
             );
             log('Received ready event from host client');
             log(
-              requestedCaps.length
-                ? requestedCaps.map((cap) => `has ${cap} = ${widgetApi.hasCapability(cap)}`).join(' | ')
-                : 'No widget capabilities were requested'
+              `has org.matrix.msc2762.send.event:m.room.message = ${approvedCaps.sendEvent}`
+              + ` | has org.matrix.msc2762.send.message:m.text = ${approvedCaps.sendMessage}`
             );
             setButtonsEnabled(widgetCapabilitiesApproved);
           });
@@ -275,8 +288,11 @@
 
         try {
           if (typeof widgetApi.hasCapability === 'function') {
-            const checks = requestedCaps.map((cap) => `has ${cap} = ${widgetApi.hasCapability(cap)}`);
-            if (checks.length) log(checks.join(' | '));
+            refreshApprovedCaps();
+            log(
+              `has org.matrix.msc2762.send.event:m.room.message = ${approvedCaps.sendEvent}`
+              + ` | has org.matrix.msc2762.send.message:m.text = ${approvedCaps.sendMessage}`
+            );
           }
         } catch (err) {
           log(`Capability inspection failed: ${err.message}`);
